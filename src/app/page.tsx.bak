@@ -1,0 +1,423 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { Trash2, Pencil, CheckCircle2 } from "lucide-react";
+
+type Type = "time" | "usage";
+
+type Item = {
+  id: string;
+  name: string;
+  amount?: number;
+  type: Type;
+  due?: string; // YYYY-MM-DD
+  current?: number;
+  unit?: string;
+  interval?: number;
+  target?: number;
+  repeat?: "none" | "monthly" | "yearly" | "biyearly"; // สำหรับตามวันและเวลา
+  lastDone?: string; // YYYY-MM-DD
+};
+
+function addDays(date: Date, days: number) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addMonths(date: Date, months: number) {
+  const d = new Date(date);
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+
+function addYears(date: Date, years: number) {
+  const d = new Date(date);
+  d.setFullYear(d.getFullYear() + years);
+  return d.toISOString().slice(0, 10);
+}
+
+const STORAGE_KEY = "subscription-tracker-items-v1";
+
+export default function Page() {
+  const [items, setItems] = useState<Item[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Item[];
+        if (Array.isArray(parsed)) {
+          setItems(parsed);
+          setLoaded(true);
+          return;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    // ถ้าไม่มีข้อมูล ให้เริ่มจากข้อมูลตัวอย่าง
+    setItems([
+      {
+        id: "ex1",
+        name: "Netflix",
+        amount: 349,
+        type: "time",
+        due: addDays(new Date(), 5),
+        repeat: "monthly",
+      },
+      {
+        id: "ex2",
+        name: "ประกันรถ",
+        amount: 8500,
+        type: "time",
+        due: addDays(new Date(), -2),
+        repeat: "yearly",
+      },
+      {
+        id: "ex3",
+        name: "เปลี่ยนน้ำมันเครื่อง",
+        type: "usage",
+        current: 45200,
+        unit: "กม.",
+        interval: 10000,
+        target: 55200,
+      },
+    ]);
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    } catch (e) {
+      // ignore
+    }
+  }, [items, loaded]);
+  const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [amount, setAmount] = useState("");
+  const [type, setType] = useState<Type>("time");
+  const [due, setDue] = useState(todayStr());
+  const [repeat, setRepeat] = useState<"none" | "monthly" | "yearly" | "biannual" | "biyearly">("monthly");
+  const [current, setCurrent] = useState("");
+  const [unit, setUnit] = useState("กม.");
+  const [interval, setInterval] = useState("");
+  const [target, setTarget] = useState("");
+
+  const monthlyTotal = useMemo(() => {
+    // ตามที่ตกลง: สรุปค่าใช้จ่ายเฉลี่ยรายปีเป็นรายเดือน
+    // คำนวณอย่างง่าย: รวมจำนวนเงินจากรายการที่มีค่าใช้จ่าย
+    return items.reduce((sum, it) => {
+      if (typeof it.amount !== "number") return sum;
+      return sum + it.amount;
+    }, 0);
+  }, [items]);
+
+  const yearlyTotal = useMemo(() => monthlyTotal * 12, [monthlyTotal]);
+
+  function getStatus(it: Item) {
+    if (it.type === "time" && it.due) {
+      const d = new Date(it.due + "T00:00:00");
+      const t = new Date(todayStr() + "T00:00:00");
+      const diff = Math.ceil((d.getTime() - t.getTime()) / (1000 * 60 * 60 * 24));
+      if (diff < 0) return { label: "เลยกำหนด", cls: "due" };
+      if (diff <= 7) return { label: "ใกล้ถึงกำหนด", cls: "warn" };
+      return { label: "ปกติ", cls: "" };
+    }
+    if (it.type === "usage") {
+      if (typeof it.current === "number" && typeof it.target === "number") {
+        if (it.current >= it.target) return { label: "ถึงกำหนด", cls: "due" };
+        if (it.target - it.current <= 1000) return { label: "ใกล้ถึงกำหนด", cls: "warn" };
+      }
+      return { label: "ปกติ", cls: "" };
+    }
+    return { label: "ปกติ", cls: "" };
+  }
+
+  function openAdd() {
+    setEditingId(null);
+    setName("");
+    setAmount("");
+    setType("time");
+    setDue(todayStr());
+    setRepeat("monthly");
+    setCurrent("");
+    setInterval("");
+    setTarget("");
+    setOpen(true);
+  }
+
+  function openEdit(it: Item) {
+    setEditingId(it.id);
+    setName(it.name);
+    setAmount(typeof it.amount === "number" ? String(it.amount) : "");
+    setType(it.type);
+    setDue(it.due || todayStr());
+    setRepeat(((it.repeat as any) === "biannual" ? "biyearly" : (it.repeat as any)) || "monthly");
+    setCurrent(typeof it.current === "number" ? String(it.current) : "");
+    setUnit(it.unit || "กม.");
+    setInterval(typeof it.interval === "number" ? String(it.interval) : "");
+    setTarget(typeof it.target === "number" ? String(it.target) : "");
+    setOpen(true);
+  }
+
+  function save() {
+    if (editingId) {
+      if (type === "time") {
+        setItems((prev) =>
+          prev.map((it) =>
+            it.id === editingId
+              ? {
+                  ...it,
+                  name: name.trim() || "(ไม่มีชื่อ)",
+                  amount: amount === "" ? undefined : Number(amount),
+                  type: "time",
+                  due,
+                  repeat: repeat as any,
+                }
+              : it
+          )
+        );
+      } else {
+        setItems((prev) =>
+          prev.map((it) =>
+            it.id === editingId
+              ? {
+                  ...it,
+                  name: name.trim() || "(ไม่มีชื่อ)",
+                  amount: amount === "" ? undefined : Number(amount),
+                  type: "usage",
+                  current: current === "" ? undefined : Number(current),
+                  unit,
+                  interval: interval === "" ? undefined : Number(interval),
+                  target: target === "" ? undefined : Number(target),
+                }
+              : it
+          )
+        );
+      }
+    } else {
+      const id = Math.random().toString(36).slice(2, 9);
+      if (type === "time") {
+        const it: Item = {
+          id,
+          name: name.trim() || "(ไม่มีชื่อ)",
+          amount: amount === "" ? undefined : Number(amount),
+          type: "time",
+          due,
+          repeat: repeat as any,
+        };
+        setItems((prev) => [it, ...prev]);
+      } else {
+        const it: Item = {
+          id,
+          name: name.trim() || "(ไม่มีชื่อ)",
+          amount: amount === "" ? undefined : Number(amount),
+          type: "usage",
+          current: current === "" ? undefined : Number(current),
+          unit,
+          interval: interval === "" ? undefined : Number(interval),
+          target: target === "" ? undefined : Number(target),
+        };
+        setItems((prev) => [it, ...prev]);
+      }
+    }
+    setOpen(false);
+    setEditingId(null);
+    setName("");
+    setAmount("");
+    setType("time");
+    setDue(todayStr());
+    setRepeat("monthly");
+    setCurrent("");
+    setInterval("");
+    setTarget("");
+  }
+
+  function remove(id: string) {
+    if (confirm("ลบรายการนี้?")) {
+      setItems((prev) => prev.filter((it) => it.id !== id));
+    }
+  }
+
+  function markDone(it: Item) {
+    if (it.type === "time") {
+      const base = new Date((it.lastDone || it.due || todayStr()) + "T00:00:00");
+      let next = it.due || todayStr();
+      if (it.repeat === "monthly") next = addMonths(base, 1);
+      else if (it.repeat === "yearly") next = addYears(base, 1);
+      else if (it.repeat === "biyearly") next = addYears(base, 2);
+      else next = todayStr();
+      setItems((prev) =>
+        prev.map((x) =>
+          x.id === it.id
+            ? { ...x, due: next, lastDone: todayStr() }
+            : x
+        )
+      );
+      return;
+    }
+    if (it.type === "usage") {
+      if (typeof it.target === "number" && typeof it.interval === "number") {
+        const current = typeof it.current === "number" ? it.current : it.target - it.interval;
+        const nextTarget = current + it.interval;
+        setItems((prev) =>
+          prev.map((x) =>
+            x.id === it.id
+              ? { ...x, current: nextTarget, target: nextTarget + (typeof it.interval === "number" ? it.interval : 0), lastDone: todayStr() }
+              : x
+          )
+        );
+        return;
+      }
+      if (typeof it.target === "number") {
+        setItems((prev) =>
+          prev.map((x) =>
+            x.id === it.id
+              ? { ...x, current: it.target, lastDone: todayStr() }
+              : x
+          )
+        );
+      }
+    }
+  }
+
+  return (
+    <>
+      <header>
+        <h1>Subscription Tracker</h1>
+      </header>
+
+      <section className="summary">
+        <div className="summary-item">
+          <div className="label">สรุปค่าใช้จ่ายรายเดือน (เฉลี่ย)</div>
+          <div className="value">{monthlyTotal.toLocaleString("th-TH")} ฿</div>
+        </div>
+        <div className="summary-item">
+          <div className="label">สรุปค่าใช้จ่ายรายปี (เฉลี่ย)</div>
+          <div className="value">{yearlyTotal.toLocaleString("th-TH")} ฿</div>
+        </div>
+      </section>
+
+      <h2>รายการ</h2>
+      <div className="list">
+        {items.map((it) => {
+          const st = getStatus(it);
+          return (
+            <div className="item" key={it.id}>
+              <div style={{ flex: 1 }}>
+                <div className="title">{it.name}</div>
+                <div className="meta">
+                  {it.type === "time" && it.due && (
+                    <>
+                      ครบกำหนด {it.due}
+                      {it.repeat === "monthly" && <> • ทุกเดือน</>}
+                      {it.repeat === "yearly" && <> • ทุกปี</>}
+                      {it.repeat === "biyearly" && <> • ทุก 2 ปี</>}
+                      {it.repeat === "none" && <> • ไม่ทำซ้ำ</>}
+                    </>
+                  )}
+                  {it.type === "usage" && typeof it.current === "number" && typeof it.target === "number" && (
+                    <>ปัจจุบัน {it.current.toLocaleString("th-TH")} {it.unit} • เป้าหมาย {it.target.toLocaleString("th-TH")} {it.unit}</>
+                  )}
+                  {typeof it.amount === "number" && <> • {it.amount.toLocaleString("th-TH")} ฿</>}
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <span className={"badge " + st.cls}>{st.label}</span>
+                <button className="ghost" style={{ padding: "6px", display: "flex", alignItems: "center" }} onClick={() => markDone(it)} aria-label="ทำรายการแล้ว">
+                  <CheckCircle2 size={16} />
+                </button>
+                <button className="ghost" style={{ padding: "6px", display: "flex", alignItems: "center" }} onClick={() => openEdit(it)} aria-label="แก้ไข">
+                  <Pencil size={16} />
+                </button>
+                <button className="ghost" style={{ padding: "6px", display: "flex", alignItems: "center", color: "#b91c1c" }} onClick={() => remove(it.id)} aria-label="ลบ">
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <button className="fab" onClick={openAdd}>+</button>
+
+      {open && (
+        <div className="modal-backdrop" onClick={() => setOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h2 style={{ marginTop: 0, marginBottom: 0 }}>{editingId ? "แก้ไขรายการ" : "เพิ่มรายการ"}</h2>
+              <button className="ghost" onClick={() => { setOpen(false); setEditingId(null); }} style={{ padding: 6 }}>ปิด</button>
+            </div>
+            <div style={{ height: 10 }} />
+            <div className="row">
+              <label>ชื่อรายการ</label>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="เช่น Netflix" />
+            </div>
+            <div className="row">
+              <label>จำนวนเงิน (ไม่บังคับ)</label>
+              <input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+            </div>
+            <div className="row">
+              <label>ชนิดรายการ</label>
+              <select value={type} onChange={(e) => setType(e.target.value as Type)}>
+                <option value="time">ตามวันเวลา</option>
+                <option value="usage">ตามระยะการใช้งาน</option>
+              </select>
+            </div>
+            {type === "time" && (
+              <>
+                <div className="row">
+                  <label>วันครบกำหนด</label>
+                  <input type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+                </div>
+                <div className="row">
+                  <label>รอบการทำซ้ำ</label>
+                  <select value={repeat} onChange={(e) => setRepeat(e.target.value as any)}>
+                    <option value="none">ไม่ทำซ้ำ</option>
+                    <option value="monthly">ทุกเดือน</option>
+                    <option value="yearly">ทุกปี</option>
+                    <option value="biyearly">ทุก 2 ปี</option>
+                  </select>
+                </div>
+              </>
+            )}
+            {type === "usage" && (
+              <>
+                <div className="row">
+                  <label>เลขปัจจุบัน</label>
+                  <input inputMode="numeric" value={current} onChange={(e) => setCurrent(e.target.value)} />
+                </div>
+                <div className="row">
+                  <label>หน่วย</label>
+                  <input value={unit} onChange={(e) => setUnit(e.target.value)} />
+                </div>
+                <div className="row">
+                  <label>ระยะรอบ (ไม่บังคับ)</label>
+                  <input inputMode="numeric" value={interval} onChange={(e) => setInterval(e.target.value)} placeholder="เช่น 10000" />
+                </div>
+                <div className="row">
+                  <label>ค่าเป้าหมายครั้งถัดไป (ไม่บังคับ)</label>
+                  <input inputMode="numeric" value={target} onChange={(e) => setTarget(e.target.value)} />
+                </div>
+              </>
+            )}
+            <div className="actions">
+              <button className="ghost" onClick={() => setOpen(false)}>ยกเลิก</button>
+              <button onClick={save}>บันทึก</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
